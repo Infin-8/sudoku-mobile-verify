@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sudoku Mobile Email Verification</title>
+    <!-- Add Appwrite SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/appwrite@11.0.0"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f7f7f7;
+            color: #333;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            max-width: 500px;
+            padding: 30px;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #4a6fc1;
+            margin-bottom: 20px;
+        }
+        .btn {
+            display: inline-block;
+            background-color: #4a6fc1;
+            color: white;
+            font-weight: 700;
+            padding: 12px 25px;
+            border-radius: 5px;
+            margin: 15px 0;
+            text-decoration: none;
+            transition: background-color 0.3s;
+        }
+        .btn:hover {
+            background-color: #3e5ea7;
+        }
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #4a6fc1;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 2s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .info {
+            margin-top: 20px;
+            color: #666;
+            font-size: 14px;
+        }
+        .manual-instructions {
+            margin-top: 30px;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 8px;
+            text-align: left;
+        }
+        .manual-instructions h3 {
+            margin-top: 0;
+        }
+        .manual-instructions code {
+            background: #eee;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sudoku Mobile</h1>
+        <div id="content">
+            <div class="loader"></div>
+            <p>Processing your verification...</p>
+        </div>
+    </div>
+
+    <script>
+        // Enhanced function to get URL parameters from query string, hash, or path
+        function getUrlParams() {
+            const params = {};
+            
+            // Try to get parameters from query string
+            const search = window.location.search.substring(1);
+            if (search) {
+                const pairs = search.split('&');
+                for (const pair of pairs) {
+                    const [key, value] = pair.split('=');
+                    params[decodeURIComponent(key)] = decodeURIComponent(value || '');
+                }
+            }
+            
+            // Also try to get params from hash (some email clients might modify links)
+            const hash = window.location.hash.substring(1);
+            if (hash && !hash.startsWith('Intent')) {
+                const hashPairs = hash.split('&');
+                for (const pair of hashPairs) {
+                    if (pair.includes('=')) {
+                        const [key, value] = pair.split('=');
+                        // Only set if we don't already have this parameter
+                        if (!params[decodeURIComponent(key)]) {
+                            params[decodeURIComponent(key)] = decodeURIComponent(value || '');
+                        }
+                    }
+                }
+            }
+            
+            // Check for parameters in the path (e.g., /verify/userId/token/secret)
+            const pathParts = window.location.pathname.split('/');
+            if (pathParts.length > 2 && pathParts[1] === 'verify') {
+                // Check if the path includes userId, token, and secret
+                if (pathParts[2] && !params.userId && !params.userid) {
+                    params.userId = decodeURIComponent(pathParts[2]);
+                }
+                if (pathParts[3] && !params.token) {
+                    params.token = decodeURIComponent(pathParts[3]);
+                }
+                if (pathParts[4] && !params.secret) {
+                    params.secret = decodeURIComponent(pathParts[4]);
+                }
+            }
+            
+            // Log parameters for debugging
+            console.log('Parsed parameters:', params);
+            return params;
+        }
+        
+        // Detect if running on iOS, Android or other platform
+        function getMobileOS() {
+            const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+            if (/android/i.test(userAgent)) return "Android";
+            if (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream) return "iOS";
+            return "Other";
+        }
+
+        // Log the URL for debugging purposes
+        function logVerificationAttempt() {
+            console.log('Verification page loaded');
+            console.log('URL:', window.location.href);
+            console.log('Path:', window.location.pathname);
+            console.log('Search:', window.location.search);
+            console.log('Hash:', window.location.hash);
+            
+            // Store debugging info in localStorage for potential troubleshooting
+            try {
+                const verificationAttempts = JSON.parse(localStorage.getItem('verificationAttempts') || '[]');
+                verificationAttempts.push({
+                    timestamp: new Date().toISOString(),
+                    url: window.location.href,
+                    userAgent: navigator.userAgent
+                });
+                // Keep only the last 5 attempts
+                if (verificationAttempts.length > 5) {
+                    verificationAttempts.shift();
+                }
+                localStorage.setItem('verificationAttempts', JSON.stringify(verificationAttempts));
+            } catch (e) {
+                console.error('Error storing verification attempt:', e);
+            }
+        }
+        
+        // Main function that handles the verification redirection
+        function handleVerification() {
+            logVerificationAttempt();
+            
+            const content = document.getElementById('content');
+            const params = getUrlParams();
+            
+            // Check all possible parameter names to make verification more robust
+            const userId = params.userId || params.userid || params.user_id || params.id || params.userId;
+            const token = params.token || params.t;
+            const secret = params.secret || params.s;
+            
+            // Check if all required parameters are present
+            if (!userId || !token || !secret) {
+                content.innerHTML = `
+                    <p style="color: #e74c3c;">Missing verification parameters.</p>
+                    <p>This link is invalid or has expired. Please request a new verification email.</p>
+                    <a class="btn" href="https://sudoku-mobile-app.com">Go to Website</a>
+                `;
+                return;
+            }
+            
+            // Create app deep link
+            const os = getMobileOS();
+            let deepLink;
+            
+            // Add direct verification option
+            const verifyDirectly = async () => {
+                try {
+                    content.innerHTML = `
+                        <div class="loader"></div>
+                        <p>Verifying your email directly...</p>
+                    `;
+                    
+                    // Initialize the Appwrite SDK
+                    const { Client, Account } = Appwrite;
+                    
+                    const client = new Client()
+                        .setEndpoint('https://cloud.appwrite.io/v1')
+                        .setProject('6847ec9997d46e39816c'); // Your Appwrite project ID
+                    
+                    const account = new Account(client);
+                    
+                    // Attempt to verify the email directly
+                    await account.updateVerification(userId, token, secret);
+                    
+                    // Show success message
+                    content.innerHTML = `
+                        <p style="color: green; font-weight: bold; font-size: 18px;">Email verified successfully!</p>
+                        <p>Your email has been verified. You can now return to the app and log in.</p>
+                        <a class="btn" href="sudokumobile://">Open Sudoku Mobile App</a>
+                    `;
+                } catch (error) {
+                    console.error('Error verifying email:', error);
+                    
+                    // Show error message and offer to try app redirect
+                    content.innerHTML = `
+                        <p style="color: red;">Error verifying your email.</p>
+                        <p>Details: ${error.message || 'Unknown error'}</p>
+                        <p>Let's try opening the app to complete verification:</p>
+                        <a class="btn" href="${deepLink}">Open in App</a>
+                        
+                        <div class="manual-instructions">
+                            <h3>Manual Verification</h3>
+                            <p>If the button doesn't work, please copy these values and enter them manually in the app:</p>
+                            <p><strong>User ID:</strong> <code>${userId}</code></p>
+                            <p><strong>Token:</strong> <code>${token}</code></p>
+                            <p><strong>Secret:</strong> <code>${secret}</code></p>
+                        </div>
+                    `;
+                }
+            };
+
+            // Use different schemes based on platform
+            if (os === "iOS") {
+                deepLink = `sudokumobile://verify?userId=${userId}&token=${token}&secret=${secret}`;
+            } else if (os === "Android") {
+                deepLink = `intent://verify?userId=${userId}&token=${token}&secret=${secret}#Intent;scheme=sudokumobile;package=com.sudoku_mobile.app;end`;
+            } else {
+                // For web - try direct verification or show parameters
+                content.innerHTML = `
+                    <p>Email verification parameters received.</p>
+                    
+                    <button class="btn" onclick="verifyDirectly()">Verify Email Directly</button>
+                    
+                    <p style="margin-top: 20px;">Or open the app on your mobile device:</p>
+                    <a class="btn" href="sudokumobile://">Open Sudoku Mobile</a>
+                    
+                    <div class="manual-instructions">
+                        <h3>Manual Verification</h3>
+                        <p>If you're having trouble, please copy these values and enter them manually in the app:</p>
+                        <p><strong>User ID:</strong> <code>${userId}</code></p>
+                        <p><strong>Token:</strong> <code>${token}</code></p>
+                        <p><strong>Secret:</strong> <code>${secret}</code></p>
+                    </div>
+                `;
+                
+                // Define the verifyDirectly function globally so it can be called from the button
+                window.verifyDirectly = verifyDirectly;
+                return;
+            }
+            
+            // Redirect to the app
+            content.innerHTML = `
+                <p>Redirecting to Sudoku app...</p>
+                <p>If redirection doesn't happen automatically, please tap the button below:</p>
+                <a class="btn" href="${deepLink}" id="redirectBtn">Open in App</a>
+                <div class="info">
+                    <p>Make sure Sudoku Mobile is installed on your device.</p>
+                </div>
+                
+                <div class="manual-instructions">
+                    <h3>Manual Verification</h3>
+                    <p>If the button doesn't work, please copy these values and enter them manually in the app:</p>
+                    <p><strong>User ID:</strong> <code>${userId}</code></p>
+                    <p><strong>Token:</strong> <code>${token}</code></p>
+                    <p><strong>Secret:</strong> <code>${secret}</code></p>
+                </div>
+            `;
+            
+            // Automatically try to open the app
+            setTimeout(() => {
+                window.location.href = deepLink;
+                
+                // After 3 seconds, if still here, show fallback message with more detailed instructions
+                setTimeout(() => {
+                    content.innerHTML = `
+                        <p style="color: orange;">Unable to open the app automatically.</p>
+                        <p>Please tap the button below to try again:</p>
+                        <a class="btn" href="${deepLink}">Open in App</a>
+                        
+                        <div class="manual-instructions">
+                            <h3>Manual Verification</h3>
+                            <p>If the button above doesn't work, follow these steps:</p>
+                            <ol>
+                                <li>Open the Sudoku Mobile app manually</li>
+                                <li>Go to Settings or Account</li>
+                                <li>Find "Verify Email" or similar option</li>
+                                <li>Enter these values:</li>
+                                <p><strong>User ID:</strong> <code>${userId}</code></p>
+                                <p><strong>Token:</strong> <code>${token}</code></p>
+                                <p><strong>Secret:</strong> <code>${secret}</code></p>
+                            </ol>
+                        </div>
+                    `;
+                }, 3000);
+            }, 1000);
+        }
+
+        // Run when the page loads
+        window.onload = handleVerification;
+    </script>
+</body>
+</html>
